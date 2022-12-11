@@ -12,6 +12,7 @@ struct Path {
     path: Vec<Point>
 }
 
+
 fn main() {
     let mut pic_threads = vec![];
 
