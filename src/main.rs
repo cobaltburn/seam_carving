@@ -1,6 +1,6 @@
+use std::collections::VecDeque;
 use std::f64;
-use image::{DynamicImage, GenericImageView, Pixel, Rgb, Rgba, RgbaImage};
-use std::thread;
+use image::{DynamicImage, Pixel, Rgb, RgbaImage};
 
 struct Point {
     x: usize,
@@ -12,67 +12,37 @@ struct Path {
     path: Vec<Point>
 }
 
-
 fn main() {
-    let mut pic_threads = vec![];
+    process_image("image.png", "image_out.png", 10, 10);
+    process_image("sky.png", "sky_out.png", 10, 10);
+    process_image("surfer.jpg", "surfer_out.jpg", 10, 10);
+    process_image("ocean.png", "ocean_out.png", 10, 10);
+    process_image("night_city.jpg", "night_city_out.jpg", 10, 10);
+}
 
-    pic_threads.push( thread::spawn(|| {
-        let image = image::open("image.png").expect("File not found");
+fn process_image(in_file: &str, out_file: &str, vertical_count: i32, horizontal_count: i32) {
+    let image = image::open(in_file).expect("File not found");
+
+    let mut image = image.into_rgba8();
+    for _ in 0..vertical_count {
         let energy_map = map_energy(&image);
         let row = first_row(&energy_map[0]);
-        let paths = find_seam(row,1, &energy_map);
+        let paths = find_seam(row, 1, &energy_map);
         let shortest_path = lowest_energy_seam(paths);
-        let output = show_seam(shortest_path, image);
-        output.save("image_out.png").expect("Image could not save");
-    }));
-
-
-    pic_threads.push( thread::spawn(|| {
-        let image = image::open("sky.png").expect("File not found");
-        let energy_map = map_energy(&image);
-        let row = first_row(&energy_map[0]);
-        let paths = find_seam(row,1, &energy_map);
-        let shortest_path = lowest_energy_seam(paths);
-        let output = show_seam(shortest_path, image);
-        output.save("sky_out.png").expect("Image could not save");
-    }));
-
-
-    pic_threads.push( thread::spawn(|| {
-        let image = image::open("surfer.jpg").expect("File not found");
-        let energy_map = map_energy(&image);
-        let row = first_row(&energy_map[0]);
-        let paths = find_seam(row,1, &energy_map);
-        let shortest_path = lowest_energy_seam(paths);
-        let output = show_seam(shortest_path, image);
-        output.save("surfer_out.jpg").expect("Image could not save");
-    }));
-
-
-    pic_threads.push( thread::spawn(|| {
-        let image = image::open("ocean.png").expect("File not found");
-        let energy_map = map_energy(&image);
-        let row = first_row(&energy_map[0]);
-        let paths = find_seam(row,1, &energy_map);
-        let shortest_path = lowest_energy_seam(paths);
-        let output = show_seam(shortest_path, image);
-        output.save("ocean_out.png").expect("Image could not save");
-    }));
-
-
-    pic_threads.push( thread::spawn(|| {
-        let image = image::open("night_city.jpg").expect("File not found");
-        let energy_map = map_energy(&image);
-        let row = first_row(&energy_map[0]);
-        let paths = find_seam(row,1, &energy_map);
-        let shortest_path = lowest_energy_seam(paths);
-        let output = show_seam(shortest_path, image);
-        output.save("night_city_out.jpg").expect("Image could not save");
-    }));
-
-    for pic_thread in pic_threads {
-        pic_thread.join().unwrap();
+        image = remove_seam(shortest_path,&image);
     }
+    let rotated_image = DynamicImage::ImageRgba8(image.clone()).rotate90();
+    image = rotated_image.into_rgba8();
+
+    for _ in 0..horizontal_count {
+        let energy_map = map_energy(&image);
+        let row = first_row(&energy_map[0]);
+        let paths = find_seam(row, 1, &energy_map);
+        let shortest_path = lowest_energy_seam(paths);
+        image = remove_seam(shortest_path,&image);
+    }
+
+    DynamicImage::ImageRgba8(image).rotate270().save(out_file).expect("Image could not save");
 }
 
 fn find_seam(mut paths: Vec<Path>, row_index: usize, energy_map: &Vec<Vec<f64>>) -> Vec<Path> {
@@ -105,7 +75,7 @@ fn find_seam(mut paths: Vec<Path>, row_index: usize, energy_map: &Vec<Vec<f64>>)
     if row_index + 1 >= energy_map.len() {
         return paths
     }
-    return find_seam(paths, row_index +1, energy_map)
+    find_seam(paths, row_index +1, energy_map)
 }
 
 fn lowest_energy_seam(paths: Vec<Path>) -> Vec<Point> {
@@ -118,13 +88,23 @@ fn lowest_energy_seam(paths: Vec<Path>) -> Vec<Point> {
     shortest_path.path
 }
 
-fn show_seam(path: Vec<Point>, image: DynamicImage) -> RgbaImage {
-    let mut output = image.into_rgba8();
-    for pt in path {
-        output.put_pixel(pt.x as u32, pt.y as u32, Rgba([255,0,0,255]))
+fn remove_seam(path: Vec<Point>, image: &RgbaImage) -> RgbaImage {
+    let mut path = VecDeque::from(path);
+    let (width, height) = image.dimensions();
+    let mut reduced_image = RgbaImage::new(width - 1, height - 1);
+    let mut image_pixels = image.pixels();
+    for y in 0..height - 1 {
+        for x in 0..width - 1 {
+            if x == path[0].x as u32 && y == path[0].y as u32 {
+                image_pixels.next();
+                path.pop_front();
+            }
+            reduced_image.put_pixel(x, y, image_pixels.next().unwrap().clone());
+        }
     }
-    output
+    reduced_image
 }
+
 fn first_row(first_row: &Vec<f64>) -> Vec<Path> {
     let mut row = vec![];
     for i in 0..first_row.len() {
@@ -133,16 +113,11 @@ fn first_row(first_row: &Vec<f64>) -> Vec<Path> {
     row
 }
 
-fn map_energy(image: &DynamicImage) -> Vec<Vec<f64>> { //TODO try to apply multi threading
-    let mut max_energy = 0.0;
+fn map_energy(image: &RgbaImage) -> Vec<Vec<f64>> {
     let (width, height) = image.dimensions();
     let mut map = vec![vec![0.0; width as usize]; height as usize];
-    let buffer = image.to_rgba8();
-    for (x, y, _) in image.pixels() {
-        let energy = calculate_energy(x, y, &buffer);
-        if energy > max_energy {
-            max_energy = energy;
-        }
+    for (x, y, _) in image.enumerate_pixels() {
+        let energy = calculate_energy(x, y, &image);
         map[y as usize][x as usize] = energy;
     }
     map
@@ -172,24 +147,7 @@ fn calculate_delta(pt1: Rgb<u8>, pt2: Rgb<u8>) -> f64 {
     compare.iter().sum()
 }
 
-// fn _calculate_intensity(image: DynamicImage) -> RgbaImage { //TODO try to apply multi threading
-//     let mut max_energy = 0.0;
-//     let (width, height) = image.dimensions();
-//     let mut map = vec![vec![0.0; width as usize]; height as usize];
-//     let buffer = image.to_rgba8();
-//     let mut output = RgbaImage::new(width, height);
-//     for (x, y, _) in image.pixels() {
-//         let energy = calculate_energy(x, y, &buffer);
-//         if energy > max_energy {
-//             max_energy = energy;
-//         }
-//         map[y as usize][x as usize] = energy;
-//     }
-//
-//     for (x, y, _) in image.pixels() {
-//         let energy = map[y as usize][x as usize];
-//         let intensity = (255.0 * energy / max_energy) as u8;
-//         output.put_pixel(x, y, Rgba([intensity,intensity,intensity, 255]));
-//     }
-//     output
-// }
+#[cfg(test)]
+mod tests {
+    use super::*;
+}
